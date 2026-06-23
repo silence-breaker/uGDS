@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <sys/types.h>
+#include <libnvm/nvm_dma.h>  /* NVM_MAP_DMABUF */
 
 #ifdef __cplusplus
 extern "C" {
@@ -100,6 +101,9 @@ uGDSError_t uGDSHandleRegister(uGDSHandle_t* fh, uGDSDescr_t* descr);
 void uGDSHandleDeregister(uGDSHandle_t fh);
 
 uGDSError_t uGDSBufRegister(const void* bufPtr_base, size_t length, int flags);
+
+/* Flag for uGDSBufRegister: use AMD HIP/dma-buf path */
+#define UGDS_REGISTER_DMABUF  NVM_MAP_DMABUF
 
 uGDSError_t uGDSBufDeregister(const void* bufPtr_base);
 
