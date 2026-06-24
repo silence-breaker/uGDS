@@ -16,7 +16,7 @@
 
 - **User-space IO stack** — bypasses the kernel NVMe driver and filesystem entirely; CPU builds NVMe commands and polls completions in user space
 - **cuFile API compatible** — existing GDS applications work with minimal changes (relink to `libugds.so`, change `cuFile` prefix to `uGDS`)
-- **Multi-vendor GPU support** -- NVIDIA CUDA and AMD Infinity Storage (HIP/ROCm) backends, individually or together for systems with both vendor GPUs
+- **Multi-vendor GPU support** — NVIDIA CUDA and AMD Infinity Storage (HIP/ROCm) backends; both can be enabled simultaneously for mixed-GPU systems
 - **Fully open-source** — BSD 3-Clause licensed; no proprietary runtime dependencies beyond the GPU driver (NVIDIA driver or AMD ROCm runtime)
 - **High performance** — busy-poll CQ completion with `_mm_pause()`, multi-queue round-robin IO, achieving up to 2.7x read and 28x write bandwidth over NVIDIA GDS
 
@@ -134,6 +134,7 @@ scripts/run_tests.sh all
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 1 | Core synchronous API + test suite | ✅ |
+| 1.5 | Unified multi-backend (NVIDIA CUDA + AMD HIP/ROCm) | 🔧 |
 | 2 | Batch IO API (multi-command doorbell) | 🔜 |
 | 3 | Async Stream API (CUDA stream integration) | 🔜 |
 | 4 | Hugepage support (larger QP depth) | 🔜 |
