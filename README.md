@@ -126,6 +126,19 @@ scripts/run_tests.sh all
 | 6 | Interrupt mode (MSI-X + eventfd) | 🔜 |
 | 7 | Filesystem compatibility (POSIX file path support) | 🔜 |
 
+## Citation
+
+uGDS originated from the motivation experiments in CoPilotIO. If you find uGDS useful in your research, please cite:
+
+```bibtex
+@inproceedings{chen2026copilotio,
+  title     = {CoPilotIO: CPU as a Co-pilot for GPU I/O to Free GPU Compute},
+  author    = {Guanyi Chen and Qi Chen and Shu Yin and Jian Zhang},
+  booktitle = {Proceedings of the 20th USENIX Symposium on Operating Systems Design and Implementation (OSDI '26)},
+  year      = {2026}
+}
+```
+
 ## References
 
 - [ssd-gpu-dma](https://github.com/enfiskutensykkel/ssd-gpu-dma) — User-space NVMe driver with GPU support
