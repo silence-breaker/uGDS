@@ -124,7 +124,9 @@ scripts/run_tests.sh all
 | 4 | Hugepage support (larger QP depth) | 🔜 |
 | 5 | SGL support (scatter-gather lists) | 🔜 |
 | 6 | Interrupt mode (MSI-X + eventfd) | 🔜 |
-| 7 | Filesystem compatibility (POSIX file path support) | 🔜 |
+| 7 | Multi-SSD support (multi-handle aggregation) | 🔜 |
+| 8 | Striping (automatic IO distribution across SSDs) | 🔜 |
+| 9 | Filesystem compatibility (POSIX file path support) | 🔜 |
 
 ## Citation
 
