@@ -46,11 +46,8 @@ int main(int argc, char** argv) {
     if (ret != -EINVAL)
         TEST_FAIL("negative offset: expected %d, got %zd", -EINVAL, ret);
 
-    // 6. Unregistered (on-the-fly) buffer must be 64KB GPU-page aligned.
-    //    The kernel driver pins at 64KB granularity and masks the device
-    //    address, so a non-aligned base+offset would be silently rounded down
-    //    and corrupt the transfer. uGDS must reject it before any DMA.
-    const uintptr_t kGpuPageSize = 65536;  // kernel pins GPU memory at 64KB
+    // 6. On-the-fly buffer must be 64KB-aligned (kernel rounds down otherwise)
+    const uintptr_t kGpuPageSize = 1UL << 16;
     void* d_unreg = nullptr;
     cudaMalloc(&d_unreg, 131072);
     if (!d_unreg) TEST_FAIL("cudaMalloc (unregistered) failed");
