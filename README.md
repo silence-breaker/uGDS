@@ -12,6 +12,12 @@
 
 ---
 
+## News
+
+- **2026-07** — [LMCache uGDS backend](https://github.com/ScaleX-IO/LMCache/tree/ugds-backend) released: uGDS as the storage backend for LMCache KV cache, achieving 2x TTFT reduction and 2x throughput improvement over the GDS backend in vLLM end-to-end benchmarks. 🚀
+- **2026-07** — AMD Infinity Storage (HIP/ROCm) backend merged ([PR #1](https://github.com/ScaleX-IO/uGDS/pull/1)): dual-backend CUDA + HIP support. 🎉
+- **2026-03** — CoPilotIO: CPU as a Co-pilot for GPU I/O to Free GPU Compute accepted to [OSDI '26](https://www.usenix.org/conference/osdi26/presentation/chen-guanyi). 🎓
+
 ## Key Features
 
 - **User-space IO stack** — bypasses the kernel NVMe driver and filesystem entirely; CPU builds NVMe commands and polls completions in user space
@@ -144,7 +150,7 @@ scripts/run_tests.sh all
 | 7 | Multi-SSD support (multi-handle aggregation) | 🔜 |
 | 8 | Striping (automatic IO distribution across SSDs) | 🔜 |
 | 9 | Filesystem compatibility (POSIX file path support) | 🔜 |
-| 10 | LMCache integration (KV cache storage backend) | 🔧 |
+| 10 | [LMCache integration](https://github.com/ScaleX-IO/LMCache) (KV cache storage backend) | ✅ |
 
 ## Citation
 
