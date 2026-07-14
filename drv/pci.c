@@ -820,7 +820,8 @@ static void ctrl_alloc_irqs(struct ctrl* ctrl, struct pci_dev* dev)
  */
 static void ctrl_free_irqs(struct ctrl* ctrl, struct pci_dev* dev)
 {
-    int i;
+    struct ugds_irq* irqs;
+    int i, n;
 
     if (ctrl->irqs == NULL)
     {
@@ -828,9 +829,11 @@ static void ctrl_free_irqs(struct ctrl* ctrl, struct pci_dev* dev)
     }
 
     mutex_lock(&ctrl->irq_lock);
-    for (i = 0; i < ctrl->num_vectors; ++i)
+    n = ctrl->num_vectors;
+    irqs = ctrl->irqs;
+    for (i = 0; i < n; ++i)
     {
-        struct ugds_irq* v = &ctrl->irqs[i];
+        struct ugds_irq* v = &irqs[i];
         struct eventfd_ctx* efd = v->efd;
 
         WRITE_ONCE(v->efd, NULL);
@@ -844,12 +847,16 @@ static void ctrl_free_irqs(struct ctrl* ctrl, struct pci_dev* dev)
             eventfd_ctx_put(efd);
         }
     }
+    /* Clear the published state INSIDE the lock so a concurrent
+     * register/unregister ioctl (which re-checks irqs/num_vectors under
+     * the same lock) can never observe a vector that is about to be
+     * freed. The actual free happens after unlocking. */
+    ctrl->irqs = NULL;
+    ctrl->num_vectors = 0;
     mutex_unlock(&ctrl->irq_lock);
 
     pci_free_irq_vectors(dev);
-    kfree(ctrl->irqs);
-    ctrl->irqs = NULL;
-    ctrl->num_vectors = 0;
+    kfree(irqs);
 }
 
 
