@@ -83,6 +83,27 @@ void nvm_cmd_rw_blks(nvm_cmd_t* cmd, uint64_t start_lba, uint16_t n_blks)
 
 
 /*
+ * Build DWORD11 of a Create I/O Completion Queue command.
+ *
+ * Per the NVMe Base Specification (Create CQ, DWORD11):
+ *   bit 0        PC  -- Physically Contiguous
+ *   bit 1        IEN -- Interrupts Enabled
+ *   bits 31:16   IV  -- Interrupt Vector
+ *
+ * When ien is false and iv is 0 this reduces to just the PC bit, matching
+ * the pre-interrupt-mode behavior. The controller ignores IV when IEN is 0.
+ */
+static inline
+uint32_t nvm_cq_dw11(uint16_t iv, bool ien, bool prp_contiguous)
+{
+    return (((uint32_t) iv) << 16)
+         | ((ien ? 1u : 0u) << 1)
+         | (prp_contiguous ? 1u : 0u);
+}
+
+
+
+/*
  * Set command's dataset management (DSM) field (DWORD13)
  */
 //static inline
