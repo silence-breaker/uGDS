@@ -159,10 +159,21 @@ interrupt mode drops to under 1% for large transfers:
 ![Interrupt vs busy-poll: CPU utilization](assets/ugds_interrupt_cpu_util.png)
 
 Measured as CPU consumed per I/O (log scale), busy-poll's cost grows with the
-transfer time because it spins the whole way, while interrupt mode stays flat —
-just submit plus one wakeup — yielding up to a **131× CPU reduction at 4 MB**:
+transfer time because it spins the whole way, while interrupt mode stays low —
+only the submit path plus one wakeup — yielding up to a **131× CPU reduction at
+4 MB**:
 
 ![Interrupt vs busy-poll: CPU cost per I/O](assets/ugds_interrupt_cpu_per_io.png)
+
+Interrupt mode's per-I/O CPU is not perfectly flat but forms a shallow U
+(≈6.9 µs at 4 KB, dipping to ≈3.9 µs at 64 KB, rising to ≈19 µs at 4 MB), for
+two composing reasons. Going *up* in size from 4 KB, the fixed per-wakeup
+scheduling cost is amortized over a longer sleep, so per-I/O CPU falls. Past
+64 KB it rises again because a large request is split into `max_transfer_size`
+chunks and each chunk builds a PRP list — the `for (i=1..n_pages)` loop in
+`do_io_internal` grows linearly with I/O size (4 MB = 1024 pages). That part is
+real command-building work that interrupt mode cannot elide; it stays tiny next
+to busy-poll's pure spin-wait (19 µs vs 2493 µs at 4 MB).
 
 For large I/O or low-queue-depth / idle workloads, interrupt mode frees almost
 the entire core at a negligible latency cost (p50 within 3% at ≥256 KB). For
