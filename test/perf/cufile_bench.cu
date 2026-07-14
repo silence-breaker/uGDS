@@ -88,7 +88,9 @@ static void* sync_rw_thread(void* arg) {
     uGDSHandle_t cf_handle = *(uGDSHandle_t*)data->handler;
     size_t done_bytes = 0;
 
+    struct timespec cpu_start, cpu_end;
     clock_gettime(CLOCK_MONOTONIC, &data->start_time);
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &cpu_start);
 
     while (done_bytes < data->size) {
         size_t remaining = data->size - done_bytes;
@@ -124,7 +126,10 @@ static void* sync_rw_thread(void* arg) {
         done_bytes += result;
     }
 
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &cpu_end);
     clock_gettime(CLOCK_MONOTONIC, &data->end_time);
+    data->cpu_time_ns = ts_diff_ns(cpu_start, cpu_end);
+    data->wall_time_ns = ts_diff_ns(data->start_time, data->end_time);
     return NULL;
 }
 
@@ -385,6 +390,8 @@ static void run_ugds_bench(BenchOpts& opts) {
         td->total_io_time = 0;
         td->io_operations = 0;
         td->total_bytes = 0;
+        td->cpu_time_ns = 0;
+        td->wall_time_ns = 0;
         td->device_id = opts.gpu_id;
 
         CHECK_CUDA(cudaMalloc(&td->gpu_buffer, chunk_size));
