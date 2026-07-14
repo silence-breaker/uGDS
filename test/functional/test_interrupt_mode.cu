@@ -4,18 +4,99 @@
 // interrupt mode (the user thread blocks on an eventfd waiting for the MSI-X
 // interrupt instead of busy-polling):
 //   1. single 4KB write / clear / read-back / verify
-//   2. 8 consecutive 4KB I/Os -- exercises completion coalescing (several
-//      completions may raise only one eventfd signal, so wait_for_completion
-//      must re-poll the CQ each call to drain them all)
+//   2. 4 threads x 16 IOs of 4KB, all in flight concurrently -- multiple
+//      MSI-X vectors fire in parallel and the CQE-DMA/IRQ race is exercised
+//      repeatedly: a completion may be picked up by the poll-before-block
+//      CQ check while its eventfd signal lands later, leaving a stale
+//      counter that the next wait must treat as a spurious wakeup (drain,
+//      re-poll the CQ, re-block). Data integrity across all 64 IOs proves
+//      no completion is lost or double-consumed.
 //
-// Real-hardware signal: after running this, `cat /proc/interrupts | grep ugds`
-// counts should be non-zero, proving the MSI-X interrupt actually fired (rather
-// than silently falling back to polling).
+// Note: the synchronous path keeps each queue pair at QD=1 (submit one,
+// wait one, under the per-QP lock), so a literal N-CQEs-one-signal pileup
+// on a single CQ cannot be constructed from this API; the stale-signal /
+// spurious-wakeup path above is the coalescing-adjacent behavior the wait
+// loop must (and does) handle by always re-polling the CQ.
+//
+// Real-hardware signal: while this test runs, `cat /proc/interrupts | grep ugds`
+// counts are non-zero, proving the MSI-X interrupt actually fired (rather than
+// silently falling back to polling). The lines disappear after the test exits
+// because teardown free_irq()s the vectors.
 //
 // Note: setenv must happen before uGDSDriverOpen / handle creation, because
 // interrupt mode is decided when uGDSHandleRegister creates the CQs.
 
 #include "test_utils.h"
+#include <thread>
+#include <atomic>
+
+static std::atomic<int> g_errors{0};
+
+static const size_t kIoSize = 4096;
+static const int kIosPerWorker = 16;
+
+// Each worker owns a distinct file region and drives kIosPerWorker
+// write/read/verify cycles while the other workers do the same in parallel.
+static void irq_worker(int id, uGDSHandle_t fh) {
+    const size_t alloc_size = 65536;
+    const off_t base_off = (off_t)(id + 1) * (off_t)(kIosPerWorker * kIoSize);
+    size_t n_words = kIoSize / sizeof(uint32_t);
+
+    void* d_buf = nullptr;
+    cudaMalloc(&d_buf, alloc_size);
+    if (!d_buf) {
+        fprintf(stderr, "worker %d: cudaMalloc failed\n", id);
+        g_errors++;
+        return;
+    }
+    uGDSError_t st = uGDSBufRegister(d_buf, alloc_size, TEST_BUF_FLAGS);
+    if (st.err != UGDS_SUCCESS) {
+        fprintf(stderr, "worker %d: BufRegister failed: %s\n",
+                id, uGDS_status_error(st.err));
+        cudaFree(d_buf);
+        g_errors++;
+        return;
+    }
+
+    for (int k = 0; k < kIosPerWorker && g_errors.load() == 0; k++) {
+        uint32_t pat = 0xA0000000u | ((uint32_t)id << 16) | (uint32_t)k;
+        off_t off = base_off + (off_t)k * kIoSize;
+
+        fill_pattern_u32<<<(n_words + 255) / 256, 256>>>((uint32_t*)d_buf, pat, n_words);
+        cudaDeviceSynchronize();
+        ssize_t ret = uGDSWrite(fh, d_buf, kIoSize, off, 0);
+        if (ret < 0 || (size_t)ret != kIoSize) {
+            fprintf(stderr, "worker %d io %d: write failed: %zd\n", id, k, ret);
+            g_errors++;
+            break;
+        }
+
+        cudaMemset(d_buf, 0, kIoSize);
+        cudaDeviceSynchronize();
+        ret = uGDSRead(fh, d_buf, kIoSize, off, 0);
+        if (ret < 0 || (size_t)ret != kIoSize) {
+            fprintf(stderr, "worker %d io %d: read failed: %zd\n", id, k, ret);
+            g_errors++;
+            break;
+        }
+
+        uint32_t* h_buf = (uint32_t*)malloc(kIoSize);
+        cudaMemcpy(h_buf, d_buf, kIoSize, cudaMemcpyDeviceToHost);
+        for (size_t i = 0; i < n_words; i++) {
+            if (h_buf[i] != pat) {
+                fprintf(stderr,
+                        "worker %d io %d: mismatch at word %zu: 0x%08X != 0x%08X\n",
+                        id, k, i, h_buf[i], pat);
+                g_errors++;
+                break;
+            }
+        }
+        free(h_buf);
+    }
+
+    uGDSBufDeregister(d_buf);
+    cudaFree(d_buf);
+}
 
 int main(int argc, char** argv) {
     if (!parse_args(argc, argv)) return 1;
@@ -31,7 +112,6 @@ int main(int argc, char** argv) {
     if (!fh) TEST_FAIL("open_handle failed (interrupt mode)");
 
     const size_t alloc_size = 65536;
-    const size_t io_size = 4096;
     const uint32_t pattern = 0xABCD1234;
 
     void* d_buf = nullptr;
@@ -42,23 +122,23 @@ int main(int argc, char** argv) {
     ASSERT_OK(st, "BufRegister");
 
     // 1. Single 4KB write / clear / read-back / verify
-    size_t n_words = io_size / sizeof(uint32_t);
+    size_t n_words = kIoSize / sizeof(uint32_t);
     fill_pattern_u32<<<(n_words + 255) / 256, 256>>>((uint32_t*)d_buf, pattern, n_words);
     cudaDeviceSynchronize();
 
-    ssize_t ret = uGDSWrite(fh, d_buf, io_size, 0, 0);
-    if (ret < 0 || (size_t)ret != io_size)
-        TEST_FAIL("interrupt-mode write: %zd / %zu", ret, io_size);
+    ssize_t ret = uGDSWrite(fh, d_buf, kIoSize, 0, 0);
+    if (ret < 0 || (size_t)ret != kIoSize)
+        TEST_FAIL("interrupt-mode write: %zd / %zu", ret, kIoSize);
 
     cudaMemset(d_buf, 0, alloc_size);
     cudaDeviceSynchronize();
 
-    ret = uGDSRead(fh, d_buf, io_size, 0, 0);
-    if (ret < 0 || (size_t)ret != io_size)
-        TEST_FAIL("interrupt-mode read: %zd / %zu", ret, io_size);
+    ret = uGDSRead(fh, d_buf, kIoSize, 0, 0);
+    if (ret < 0 || (size_t)ret != kIoSize)
+        TEST_FAIL("interrupt-mode read: %zd / %zu", ret, kIoSize);
 
-    uint32_t* h_buf = (uint32_t*)malloc(io_size);
-    cudaMemcpy(h_buf, d_buf, io_size, cudaMemcpyDeviceToHost);
+    uint32_t* h_buf = (uint32_t*)malloc(kIoSize);
+    cudaMemcpy(h_buf, d_buf, kIoSize, cudaMemcpyDeviceToHost);
     for (size_t i = 0; i < n_words; i++) {
         if (h_buf[i] != pattern) {
             free(h_buf);
@@ -68,38 +148,20 @@ int main(int argc, char** argv) {
     }
     free(h_buf);
 
-    // 2. 8x4KB burst (exercises completion coalescing)
-    // Write 8 distinct patterns to 8 consecutive 4KB blocks, then read back and verify each.
-    const int N = 8;
-    for (int b = 0; b < N; b++) {
-        uint32_t pat = 0x1000 + b;
-        fill_pattern_u32<<<(n_words + 255) / 256, 256>>>((uint32_t*)d_buf, pat, n_words);
-        cudaDeviceSynchronize();
-        ret = uGDSWrite(fh, d_buf, io_size, (off_t)b * io_size, 0);
-        if (ret < 0 || (size_t)ret != io_size)
-            TEST_FAIL("burst write block %d: %zd", b, ret);
-    }
-    for (int b = 0; b < N; b++) {
-        uint32_t pat = 0x1000 + b;
-        cudaMemset(d_buf, 0, alloc_size);
-        cudaDeviceSynchronize();
-        ret = uGDSRead(fh, d_buf, io_size, (off_t)b * io_size, 0);
-        if (ret < 0 || (size_t)ret != io_size)
-            TEST_FAIL("burst read block %d: %zd", b, ret);
-        uint32_t* hb = (uint32_t*)malloc(io_size);
-        cudaMemcpy(hb, d_buf, io_size, cudaMemcpyDeviceToHost);
-        for (size_t i = 0; i < n_words; i++) {
-            if (hb[i] != pat) {
-                free(hb);
-                TEST_FAIL("burst block %d mismatch at word %zu: 0x%08X != 0x%08X",
-                          b, i, hb[i], pat);
-            }
-        }
-        free(hb);
-    }
-
     uGDSBufDeregister(d_buf);
     cudaFree(d_buf);
+
+    // 2. Concurrent interrupt-mode stress: 4 threads x 16 IOs in parallel
+    //    (multiple vectors firing simultaneously + stale-eventfd wakeups)
+    const int n_threads = 4;
+    std::thread threads[n_threads];
+    for (int i = 0; i < n_threads; i++)
+        threads[i] = std::thread(irq_worker, i, fh);
+    for (int i = 0; i < n_threads; i++)
+        threads[i].join();
+    if (g_errors.load() != 0)
+        TEST_FAIL("%d concurrent interrupt-mode error(s)", g_errors.load());
+
     close_handle(fh);
     uGDSDriverClose();
     TEST_PASS();
