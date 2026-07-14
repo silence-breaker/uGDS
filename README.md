@@ -124,6 +124,14 @@ scripts/run_tests.sh compare
 scripts/run_tests.sh all
 ```
 
+The functional suite includes the interrupt-mode tests (`test_interrupt_ioctls`,
+`test_interrupt_mode`). To exercise the whole suite over the interrupt path as
+well, run it with the mode enabled:
+
+```bash
+UGDS_INTERRUPT_MODE=1 scripts/run_tests.sh functional
+```
+
 ## Interrupt Mode (MSI-X + eventfd)
 
 By default uGDS busy-polls the completion queue (`_mm_pause`) to detect I/O
@@ -143,21 +151,24 @@ It applies only to the synchronous I/O queue pairs; the batch queue always
 polls. If the controller exposes no MSI-X vectors, uGDS transparently falls
 back to busy-poll.
 
-**When to use it.** The CPU saved scales with device busy time, so the tradeoff
-depends on I/O size (single thread, QD=1, sequential read, A100 + Samsung NVMe):
+**When to use it.** The CPU saved scales with device busy time. The following
+measurements are single-thread, QD=1, sequential read on an A100 + Samsung NVMe.
+Busy-poll keeps the I/O thread at 100% CPU regardless of I/O size, while
+interrupt mode drops to under 1% for large transfers:
 
-| I/O size | Busy-poll CPU util | Interrupt CPU util | p50 latency (poll → intr) |
-|---------:|:------------------:|:------------------:|:-------------------------:|
-| 4 KB     | 100% | 45% | 5.1 → 17.5 µs |
-| 64 KB    | 100% | 16% | 19.7 → 27.0 µs |
-| 256 KB   | 100% | 2.3% | 138.9 → 140.8 µs |
-| 1 MB     | 100% | 1.4% | 732 → 745 µs |
-| 4 MB     | 100% | 0.8% | 2523 → 2544 µs |
+![Interrupt vs busy-poll: CPU utilization](assets/ugds_interrupt_cpu_util.png)
+
+Measured as CPU consumed per I/O (log scale), busy-poll's cost grows with the
+transfer time because it spins the whole way, while interrupt mode stays flat —
+just submit plus one wakeup — yielding up to a **127× CPU reduction at 4 MB**:
+
+![Interrupt vs busy-poll: CPU cost per I/O](assets/ugds_interrupt_cpu_per_io.png)
 
 For large I/O or low-queue-depth / idle workloads, interrupt mode frees almost
-the entire core at a negligible latency cost (<2% at ≥256 KB). For tiny, latency
--critical I/O, keep the default busy-poll — a completion often arrives before the
-thread would even block, so interrupt mode only adds `ppoll` overhead there.
+the entire core at a negligible latency cost (p50 within 2% at ≥256 KB). For
+tiny, latency-critical I/O, keep the default busy-poll — a completion often
+arrives before the thread would even block, so interrupt mode only adds `ppoll`
+overhead there (4 KB p50 5.1 → 17.5 µs).
 
 ## API Coverage
 
