@@ -124,6 +124,41 @@ scripts/run_tests.sh compare
 scripts/run_tests.sh all
 ```
 
+## Interrupt Mode (MSI-X + eventfd)
+
+By default uGDS busy-polls the completion queue (`_mm_pause`) to detect I/O
+completion — this is what delivers uGDS's low latency, but it keeps a CPU core
+spinning for the entire duration of each transfer. Interrupt mode is an opt-in
+alternative: the kernel module allocates MSI-X vectors and signals an eventfd
+from its IRQ handler, so the submitting thread blocks in `ppoll` instead of
+spinning.
+
+Enable it per process with an environment variable (default is busy-poll):
+
+```bash
+UGDS_INTERRUPT_MODE=1 ./your_app        # values: 1 / on / true / yes
+```
+
+It applies only to the synchronous I/O queue pairs; the batch queue always
+polls. If the controller exposes no MSI-X vectors, uGDS transparently falls
+back to busy-poll.
+
+**When to use it.** The CPU saved scales with device busy time, so the tradeoff
+depends on I/O size (single thread, QD=1, sequential read, A100 + Samsung NVMe):
+
+| I/O size | Busy-poll CPU util | Interrupt CPU util | p50 latency (poll → intr) |
+|---------:|:------------------:|:------------------:|:-------------------------:|
+| 4 KB     | 100% | 45% | 5.1 → 17.5 µs |
+| 64 KB    | 100% | 16% | 19.7 → 27.0 µs |
+| 256 KB   | 100% | 2.3% | 138.9 → 140.8 µs |
+| 1 MB     | 100% | 1.4% | 732 → 745 µs |
+| 4 MB     | 100% | 0.8% | 2523 → 2544 µs |
+
+For large I/O or low-queue-depth / idle workloads, interrupt mode frees almost
+the entire core at a negligible latency cost (<2% at ≥256 KB). For tiny, latency
+-critical I/O, keep the default busy-poll — a completion often arrives before the
+thread would even block, so interrupt mode only adds `ppoll` overhead there.
+
 ## API Coverage
 
 | API | Status | Notes |
@@ -146,7 +181,7 @@ scripts/run_tests.sh all
 | 3 | Async Stream API (CUDA stream integration) | ✅ |
 | 4 | Hugepage support (larger QP depth) | ✅ |
 | 5 | SGL support (scatter-gather lists) | 🔜 |
-| 6 | Interrupt mode (MSI-X + eventfd) | 🔜 |
+| 6 | Interrupt mode (MSI-X + eventfd) | ✅ |
 | 7 | Multi-SSD support (multi-handle aggregation) | 🔜 |
 | 8 | Striping (automatic IO distribution across SSDs) | 🔜 |
 | 9 | Filesystem compatibility (POSIX file path support) | 🔜 |
