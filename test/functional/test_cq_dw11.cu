@@ -1,15 +1,16 @@
-// Phase 6 阶段 2 — Create-CQ 命令 DWORD11 位域单元测试
+// Phase 6 Stage 2 - Create-CQ command DWORD11 bitfield unit test
 //
-// 验证 nvm_cq_dw11() 按 NVMe Base Spec 正确构造 Create I/O Completion Queue
-// 命令的 DWORD11：
+// Verifies that nvm_cq_dw11() constructs the Create I/O Completion Queue
+// command's DWORD11 correctly according to the NVMe Base Specification:
 //   bit 0      PC  (Physically Contiguous)
 //   bit 1      IEN (Interrupts Enabled)
 //   bits 31:16 IV  (Interrupt Vector)
 //
-// 这是纯逻辑单元测试，不涉及设备或 GPU（忽略命令行参数）。
+// This is a pure logical unit test and does not touch any device or GPU
+// (command-line arguments are ignored).
 //
-// RED：nvm_cq_dw11() 尚不存在时编译失败。
-// GREEN：在 nvm_cmd.h 实现后，全部断言通过。
+// RED: fails to compile if nvm_cq_dw11() is not yet implemented.
+// GREEN: all assertions pass after implementing it in nvm_cmd.h.
 
 #include <cstdio>
 #include <cstdint>
@@ -28,29 +29,31 @@ static int failures = 0;
     } while (0)
 
 int main(int, char**) {
-    // 1. 默认：无中断，物理连续 (PC=1) —— 与旧代码 (!need_prp) 一致
+    // 1. Default: no interrupt, physically contiguous (PC=1) -- matches the
+    //    old code path (!need_prp)
     //    need_prp=false ⇒ PC=1；iv=0, ien=false
     CHECK_EQ(nvm_cq_dw11(0, false, /*prp_contiguous=*/true),
              0x00000001u, "PC only (contiguous, no IRQ)");
 
-    // 2. 非连续 (PC=0)，无中断
+    // 2. Non-contiguous (PC=0), no interrupt
     CHECK_EQ(nvm_cq_dw11(0, false, /*prp_contiguous=*/false),
              0x00000000u, "non-contiguous, no IRQ");
 
-    // 3. 中断使能，向量 0，物理连续 ⇒ IEN(bit1)=1, PC(bit0)=1
+    // 3. Interrupts enabled, vector 0, contiguous => IEN(bit1)=1, PC(bit0)=1
     CHECK_EQ(nvm_cq_dw11(0, true, /*prp_contiguous=*/true),
              0x00000003u, "IEN + PC, vector 0");
 
-    // 4. 中断使能，向量 5，物理连续 ⇒ IV=5<<16 | IEN | PC
+    // 4. Interrupts enabled, vector 5, contiguous => IV=5<<16 | IEN | PC
     CHECK_EQ(nvm_cq_dw11(5, true, /*prp_contiguous=*/true),
              (5u << 16) | 0x3u, "IEN + PC, vector 5");
 
-    // 5. 中断使能，向量 16（本盘最大 17 个向量的边界内）
+    // 5. Interrupts enabled, vector 16 (within this drive's 17-vector range)
     CHECK_EQ(nvm_cq_dw11(16, true, /*prp_contiguous=*/true),
              (16u << 16) | 0x3u, "IEN + PC, vector 16");
 
-    // 6. 向量非零但 IEN=false ⇒ IV 仍写入，IEN 位为 0
-    //    (控制器在 IEN=0 时忽略 IV，但位域构造应如实反映参数)
+    // 6. Non-zero vector but IEN=false => IV is still written, IEN bit is 0
+    //    (the controller ignores IV when IEN=0, but the bitfield should still
+    //    reflect the arguments faithfully)
     CHECK_EQ(nvm_cq_dw11(5, false, /*prp_contiguous=*/true),
              (5u << 16) | 0x1u, "IV set but IEN=0");
 

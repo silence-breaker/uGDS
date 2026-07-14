@@ -1,16 +1,19 @@
-// Phase 6 阶段 4 — 中断模式端到端测试
+// Phase 6 Stage 4 - End-to-end test for interrupt mode
 //
-// 强制开启 UGDS_INTERRUPT_MODE，验证在中断模式下（用户线程阻塞在 eventfd 上
-// 等待 MSI-X 中断，而非忙轮询）I/O 仍然正确：
-//   1. 单次 4KB 写 / 清零 / 读回 / 校验
-//   2. 8 个连续 4KB I/O 突发 —— 检验完成合并（多个完成可能只触发一次 eventfd
-//      信号，wait_for_completion 必须靠每次先重新轮询 CQ 把它们全部取到）
+// Forces UGDS_INTERRUPT_MODE and verifies that I/O is still correct in
+// interrupt mode (the user thread blocks on an eventfd waiting for the MSI-X
+// interrupt instead of busy-polling):
+//   1. single 4KB write / clear / read-back / verify
+//   2. 8 consecutive 4KB I/Os -- exercises completion coalescing (several
+//      completions may raise only one eventfd signal, so wait_for_completion
+//      must re-poll the CQ each call to drain them all)
 //
-// 真机验证信号：跑此测试后 `cat /proc/interrupts | grep ugds` 计数应非零，
-// 证明 MSI-X 中断确实触发（而非静默回退到轮询）。
+// Real-hardware signal: after running this, `cat /proc/interrupts | grep ugds`
+// counts should be non-zero, proving the MSI-X interrupt actually fired (rather
+// than silently falling back to polling).
 //
-// 注意：必须在 uGDSDriverOpen / 建 handle 之前 setenv，因为中断模式在
-// uGDSHandleRegister 建 CQ 时确定。
+// Note: setenv must happen before uGDSDriverOpen / handle creation, because
+// interrupt mode is decided when uGDSHandleRegister creates the CQs.
 
 #include "test_utils.h"
 
@@ -18,7 +21,7 @@ int main(int argc, char** argv) {
     if (!parse_args(argc, argv)) return 1;
     cudaSetDevice(g_gpu_id);
 
-    // 强制中断模式（必须在建 handle 前设置）
+    // Force interrupt mode (must be set before creating the handle)
     setenv("UGDS_INTERRUPT_MODE", "1", 1);
 
     uGDSError_t st = uGDSDriverOpen();
@@ -38,7 +41,7 @@ int main(int argc, char** argv) {
     st = uGDSBufRegister(d_buf, alloc_size, TEST_BUF_FLAGS);
     ASSERT_OK(st, "BufRegister");
 
-    // ── 1. 单次 4KB 写/清/读/校验 ──
+    // 1. Single 4KB write / clear / read-back / verify
     size_t n_words = io_size / sizeof(uint32_t);
     fill_pattern_u32<<<(n_words + 255) / 256, 256>>>((uint32_t*)d_buf, pattern, n_words);
     cudaDeviceSynchronize();
@@ -65,8 +68,8 @@ int main(int argc, char** argv) {
     }
     free(h_buf);
 
-    // ── 2. 8×4KB 突发（检验完成合并）──
-    // 写 8 个不同 pattern 到 8 个连续 4KB 块，再读回逐块校验。
+    // 2. 8x4KB burst (exercises completion coalescing)
+    // Write 8 distinct patterns to 8 consecutive 4KB blocks, then read back and verify each.
     const int N = 8;
     for (int b = 0; b < N; b++) {
         uint32_t pat = 0x1000 + b;

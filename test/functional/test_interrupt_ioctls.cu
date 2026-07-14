@@ -1,15 +1,15 @@
-// Phase 6 Stage 1 — 中断模式内核基础设施的行为测试
+// Phase 6 Stage 1 - Behavioral test for the interrupt-mode kernel infrastructure
 //
-// 验证内核驱动新增的三个 ioctl 的最小契约：
-//   NVM_GET_NUM_VECTORS       查询已分配的 MSI-X 向量数（应 > 0）
-//   NVM_REGISTER_INTERRUPT    把一个 eventfd 绑定到某个向量
-//   NVM_UNREGISTER_INTERRUPT  解绑
+// Verifies the minimal contract of the three new kernel-driver ioctls:
+//   NVM_GET_NUM_VECTORS       query the number of allocated MSI-X vectors (> 0)
+//   NVM_REGISTER_INTERRUPT    bind an eventfd to a vector
+//   NVM_UNREGISTER_INTERRUPT  unbind
 //
-// 本测试不涉及 GPU/CUDA，只直接对设备 fd 发 ioctl。
+// This test does not touch GPU/CUDA; it issues ioctls directly on the device fd.
 //
-// RED：在内核实现这些 ioctl 之前，NVM_GET_NUM_VECTORS 会返回 -1/EINVAL
-//      （未知 ioctl 命令），测试失败。
-// GREEN：内核实现后，全部契约满足，测试通过。
+// RED: before the kernel implements these ioctls, NVM_GET_NUM_VECTORS returns
+//      -1/EINVAL (unknown ioctl command) and the test fails.
+// GREEN: once implemented, the whole contract holds and the test passes.
 
 #include <cstdio>
 #include <cstdlib>
@@ -22,7 +22,8 @@
 #include <linux/types.h>
 #include <asm/ioctl.h>
 
-// ── 期望的 ioctl ABI 契约（阶段1将在 drv/ioctl.h + libnvm/internal/ioctl.h 实现）──
+// Expected ioctl ABI contract (Stage 1 implements it in drv/ioctl.h +
+// libnvm/internal/ioctl.h).
 #define NVM_IOCTL_TYPE 0x80
 
 struct nvm_ioctl_irq {
@@ -48,7 +49,7 @@ int main(int argc, char** argv) {
     int fd = open(dev_path, O_RDWR);
     if (fd < 0) FAIL("open(%s): %s", dev_path, strerror(errno));
 
-    // 1. NVM_GET_NUM_VECTORS 应返回 >0 的向量数
+    // 1. NVM_GET_NUM_VECTORS should return a vector count > 0
     __u32 num_vectors = 0;
     if (ioctl(fd, NVM_GET_NUM_VECTORS, &num_vectors) != 0)
         FAIL("NVM_GET_NUM_VECTORS: %s", strerror(errno));
@@ -56,7 +57,7 @@ int main(int argc, char** argv) {
         FAIL("NVM_GET_NUM_VECTORS returned 0 vectors (MSI-X not allocated)");
     printf("  num_vectors = %u\n", num_vectors);
 
-    // 2. 用 eventfd 注册向量 0 应成功
+    // 2. Registering vector 0 with an eventfd should succeed
     int efd = eventfd(0, EFD_CLOEXEC);
     if (efd < 0) FAIL("eventfd: %s", strerror(errno));
 
@@ -67,21 +68,21 @@ int main(int argc, char** argv) {
     if (ioctl(fd, NVM_REGISTER_INTERRUPT, &reg) != 0)
         FAIL("NVM_REGISTER_INTERRUPT(vector=0): %s", strerror(errno));
 
-    // 3. 重复注册同一向量应返回 EBUSY
+    // 3. Re-registering the same vector should return EBUSY
     int rc = ioctl(fd, NVM_REGISTER_INTERRUPT, &reg);
     if (rc == 0)
         FAIL("duplicate NVM_REGISTER_INTERRUPT should fail with EBUSY, but succeeded");
     if (errno != EBUSY)
         FAIL("duplicate register: expected EBUSY, got %s", strerror(errno));
 
-    // 4. 注销向量 0 应成功
+    // 4. Unregistering vector 0 should succeed
     if (ioctl(fd, NVM_UNREGISTER_INTERRUPT, &reg) != 0)
         FAIL("NVM_UNREGISTER_INTERRUPT(vector=0): %s", strerror(errno));
 
-    // 5. 越界向量应返回 EINVAL
+    // 5. An out-of-range vector should return EINVAL
     struct nvm_ioctl_irq bad;
     memset(&bad, 0, sizeof(bad));
-    bad.vector = num_vectors;   // 越界（合法范围 0..num_vectors-1）
+    bad.vector = num_vectors;   // out of range (valid: 0..num_vectors-1)
     bad.eventfd = efd;
     rc = ioctl(fd, NVM_REGISTER_INTERRUPT, &bad);
     if (rc == 0)
