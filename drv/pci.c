@@ -486,7 +486,11 @@ static irqreturn_t ugds_irq_handler(int irq, void* dev_id)
 
     if (efd != NULL)
     {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 8, 0)
         eventfd_signal(efd);
+#else
+        eventfd_signal(efd, 1);
+#endif
     }
 
     return IRQ_HANDLED;
@@ -500,11 +504,7 @@ static long do_register_irq(struct ugds_file_ctx* ctx, u32 vector, int eventfd)
     struct ugds_irq* v;
     long retval = 0;
 
-    if (ctrl->num_vectors == 0)
-    {
-        return -ENODEV;
-    }
-    if (vector >= (u32) ctrl->num_vectors || vector >= UGDS_MAX_IRQ_VECTORS)
+    if (vector >= UGDS_MAX_IRQ_VECTORS)
     {
         return -EINVAL;
     }
@@ -516,6 +516,20 @@ static long do_register_irq(struct ugds_file_ctx* ctx, u32 vector, int eventfd)
     }
 
     mutex_lock(&ctrl->irq_lock);
+
+    /* Re-validate under irq_lock: ctrl_free_irqs() (hot-remove teardown)
+     * clears irqs/num_vectors while holding this lock, so checking here
+     * closes the TOCTOU window that a lock-free guard would leave open. */
+    if (ctrl->irqs == NULL || ctrl->num_vectors == 0)
+    {
+        retval = -ENODEV;
+        goto out;
+    }
+    if (vector >= (u32) ctrl->num_vectors)
+    {
+        retval = -EINVAL;
+        goto out;
+    }
 
     v = &ctrl->irqs[vector];
     if (v->efd != NULL)
@@ -556,16 +570,27 @@ static long do_unregister_irq(struct ugds_file_ctx* ctx, u32 vector)
     struct ugds_irq* v;
     struct eventfd_ctx* efd;
 
-    if (ctrl->num_vectors == 0)
-    {
-        return -ENODEV;
-    }
-    if (vector >= (u32) ctrl->num_vectors || vector >= UGDS_MAX_IRQ_VECTORS)
+    if (vector >= UGDS_MAX_IRQ_VECTORS)
     {
         return -EINVAL;
     }
 
     mutex_lock(&ctrl->irq_lock);
+
+    /* Re-validate under irq_lock. If ctrl_free_irqs() already tore down
+     * (hot-remove), irqs is NULL; the vector is already freed, so this
+     * file's ownership bit is stale -- just clear it and return. */
+    if (ctrl->irqs == NULL || ctrl->num_vectors == 0)
+    {
+        clear_bit(vector, ctx->irq_owned);
+        mutex_unlock(&ctrl->irq_lock);
+        return -ENODEV;
+    }
+    if (vector >= (u32) ctrl->num_vectors)
+    {
+        mutex_unlock(&ctrl->irq_lock);
+        return -EINVAL;
+    }
 
     if (!test_bit(vector, ctx->irq_owned))
     {
