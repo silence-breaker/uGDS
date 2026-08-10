@@ -259,6 +259,7 @@ ssize_t do_io_internal(uGDSHandle_t fh, void* bufPtr_base, size_t size,
                 timed_out = true;
                 /* Mark wedged while still holding qp.lock to prevent
                  * QP reuse before the flag is visible. */
+                // wedged means the handle is poisoned and other threads can not reuse this qp
                 hs->wedged.store(true, std::memory_order_release);
                 goto out;
             }
@@ -288,11 +289,12 @@ ssize_t do_io_internal(uGDSHandle_t fh, void* bufPtr_base, size_t size,
          * under qp.lock. Retain all resources. */
         fprintf(stderr, "uGDS: I/O timeout -- handle wedged. "
                 "Controller reset required.\n");
-        /* Do NOT unmap on-the-fly buffer or release in-flight ref. */
     } else if (on_the_fly && buf_dma != nullptr) {
+        /* Completion was observed, so the temporary mapping is safe to release. */
         nvm_dma_unmap(buf_dma);
-    } else if (buf_dma != nullptr) {
-        /* Registered buffer: release in-flight reference. */
+    } else if (!on_the_fly && buf_dma != nullptr) {
+        /* Registered buffer: release only this I/O's in-flight reference.
+         * The shared DMA mapping is released by uGDSBufDeregister(). */
         std::lock_guard<std::mutex> drv_lock(g_driver.lock);
         auto it = g_driver.buf_registry.find(bufPtr_base);
         if (it != g_driver.buf_registry.end())
