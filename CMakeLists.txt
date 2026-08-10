@@ -198,6 +198,13 @@ endif()
 target_link_libraries(ugds PRIVATE Threads::Threads)
 target_compile_options(ugds PRIVATE -Wall -O2)
 
+# Test-only fault injection. Disabled in normal builds.
+option(UGDS_TEST_FORCE_SQ_FULL_TIMEOUT
+       "Force an SQ-full completion timeout for the regression test" OFF)
+if(UGDS_TEST_FORCE_SQ_FULL_TIMEOUT)
+    target_compile_definitions(ugds PRIVATE UGDS_TEST_FORCE_SQ_FULL_TIMEOUT)
+endif()
+
 # - Tests and benchmarks -----------------------
 set(FUNCTIONAL_TESTS
     test_driver_lifecycle
@@ -225,6 +232,10 @@ set(FUNCTIONAL_TESTS
     test_interrupt_mode
     test_dmabuf_export
 )
+
+if(UGDS_TEST_FORCE_SQ_FULL_TIMEOUT)
+    list(APPEND FUNCTIONAL_TESTS test_queue_full_timeout)
+endif()
 
 # RDMA/dmabuf tests -- only built/run when RDMA is enabled
 set(RDMA_TESTS

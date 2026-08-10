@@ -11,6 +11,13 @@
 
 static nvm_cpl_t* wait_for_completion(HandleState* hs, IOQueuePair& qp)
 {
+#ifdef UGDS_TEST_FORCE_SQ_FULL_TIMEOUT
+    /* Test-only: the caller forces the SQ-full branch below. */
+    (void)hs;
+    (void)qp;
+    return nullptr;
+#endif
+
     if (qp.irq_efd < 0) {
         nvm_cpl_t* cpl = nullptr;
         uint64_t spins = 0;
@@ -205,7 +212,12 @@ ssize_t do_io_internal(uGDSHandle_t fh, void* bufPtr_base, size_t size,
             if (n_pages == 0) n_pages = 1;
 
             nvm_cmd_t* cmd = nullptr;
+#ifdef UGDS_TEST_FORCE_SQ_FULL_TIMEOUT
+            /* Test-only: model a full SQ with an older command pending. */
+            while (true) {
+#else
             while ((cmd = nvm_sq_enqueue(&qp.sq)) == nullptr) {
+#endif
                 nvm_cpl_t* drain = wait_for_completion(hs, qp);
                 if (drain == nullptr) {
                     result = -EIO;
