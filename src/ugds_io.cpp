@@ -209,6 +209,10 @@ ssize_t do_io_internal(uGDSHandle_t fh, void* bufPtr_base, size_t size,
                 nvm_cpl_t* drain = wait_for_completion(hs, qp);
                 if (drain == nullptr) {
                     result = -EIO;
+                    /* An older submitted command may still DMA. Treat this
+                     * exactly like a post-submit completion timeout. */
+                    timed_out = true;
+                    hs->wedged.store(true, std::memory_order_release);
                     goto out;
                 }
                 uint16_t st = UGDS_CPL_SCT_SC(drain);
